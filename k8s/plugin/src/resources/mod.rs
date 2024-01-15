@@ -1,7 +1,10 @@
 use crate::Error;
 use clap::Parser;
 use plugin::{
-    resources::{CordonResources, DrainResources, GetResources, ScaleResources, UnCordonResources},
+    resources::{
+        CordonResources, DrainResources, GetResources, InstallResources, ScaleResources,
+        UnCordonResources, UninstallResources,
+    },
     ExecuteOperation,
 };
 use std::{ops::Deref, path::PathBuf};
@@ -66,6 +69,12 @@ pub enum Operations {
     /// `Delete` the upgrade resources.
     #[clap(subcommand)]
     Delete(DeleteResources),
+    /// `Install` resources.
+    #[clap(subcommand)]
+    Install(InstallResources),
+    /// `Uninstall` resources.
+    #[clap(subcommand)]
+    Uninstall(UninstallResources),
 }
 
 #[async_trait::async_trait(?Send)]
@@ -85,6 +94,8 @@ impl ExecuteOperation for Operations {
             Operations::Scale(resource) => resource.execute(cli_args).await?,
             Operations::Cordon(resource) => resource.execute(cli_args).await?,
             Operations::Uncordon(resource) => resource.execute(cli_args).await?,
+            Operations::Install(resource) => resource.execute(cli_args).await?,
+            Operations::Uninstall(resource) => resource.execute(cli_args).await?,
             Operations::Dump(resources) => {
                 // todo: build and pass arguments
                 resources.execute(&()).await.map_err(|e| {
