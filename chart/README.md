@@ -134,7 +134,7 @@ $ helm install my-release openebs/mayastor
 | etcd.&ZeroWidthSpace;replicaCount | Number of replicas of etcd | `3` |
 | image.&ZeroWidthSpace;pullPolicy | ImagePullPolicy for our images | `"Always"` |
 | image.&ZeroWidthSpace;registry | Image registry to pull our product images | `"docker.io"` |
-| image.&ZeroWidthSpace;repo | Image registry's namespace | `"openebs"` |
+| image.&ZeroWidthSpace;repo | Image registry's namespace | `"datacoresoftware"` |
 | image.&ZeroWidthSpace;tag | Release tag for our images | `"develop"` |
 | io_engine.&ZeroWidthSpace;coreList | If not empty, overrides the cpuCount and explicitly sets the list of cores. Example: --set='io_engine.coreList={30,31}' | `[]` |
 | io_engine.&ZeroWidthSpace;cpuCount | The number of cores that each io-engine instance will bind to. | `"2"` |

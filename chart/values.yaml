@@ -2,7 +2,7 @@ image:
   # -- Image registry to pull our product images
   registry: docker.io
   # -- Image registry's namespace
-  repo: openebs
+  repo: datacoresoftware
   # -- Release tag for our images
   tag: develop
   repoTags:
@@ -218,6 +218,21 @@ agents:
           cpu: "100m"
           # -- Memory requests for ha cluster agent
           memory: "16Mi"
+
+license:
+  # logLevel for the licensing crate
+  logLevel: info
+  resources:
+    limits:
+      # cpu limits for license component
+      cpu: "100m"
+      # memory limits for license component
+      memory: "64Mi"
+    requests:
+      # cpu requests for license component
+      cpu: "50m"
+      # memory requests for license component
+      memory: "32Mi"
 
 apis:
   rest:
