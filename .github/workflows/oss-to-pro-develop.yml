@@ -1,0 +1,30 @@
+name: Oss to Pro
+on:
+  pull_request:
+    types: ['opened','reopened','edited']
+    branches:
+      - 'develop'
+jobs:
+  ossToPro:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+# two approvals are required in this repo
+      - name: Approve Pull Request by CI User
+        if: contains(github.event.pull_request.labels.*.name, 'oss-sync')
+        run: |
+          gh pr review ${{ github.event.pull_request.number }} --approve
+        env:
+          GH_TOKEN: ${{ secrets.ORG_CI_GITHUB }}
+      - name: Approve Pull Request by CI User
+        if: contains(github.event.pull_request.labels.*.name, 'oss-sync')
+        run: |
+          gh pr review ${{ github.event.pull_request.number }} --approve
+        env:
+          GH_TOKEN: ${{ secrets.ORG_CI_GITHUB_2 }}
+      - name: Bors Merge Pull Request
+        if: contains(github.event.pull_request.labels.*.name, 'oss-sync')
+        run: |
+          gh pr comment ${{ github.event.pull_request.number }} --body "bors try"
+        env:
+          GH_TOKEN: ${{ secrets.ORG_CI_GITHUB }}
