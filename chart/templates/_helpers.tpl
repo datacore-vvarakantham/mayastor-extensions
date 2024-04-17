@@ -66,7 +66,7 @@ Usage:
 {{ include "csi_node_init_containers" . }}
 */}}
 {{- define "csi_node_init_containers" -}}
-    {{- if .Values.csi.node.initContainers.enabled }}
+    {{- if (.Values.csi.node.initContainers).enabled }}
     {{- include "render" (dict "value" .Values.csi.node.initContainers.containers "context" $) | nindent 8 }}
     {{- end }}
 {{- end -}}
@@ -117,6 +117,14 @@ Usage:
 {{/* Get the number of cores from the coreList */}}
 {{- define "coreCount" -}}
 {{- include "coreListUniq" . | split "," | len -}}
+{{- end -}}
+
+{{- define "logFormat" -}}
+{{- if (regexMatch "^((json|pretty|compact))$" .Values.base.logging.format) -}}
+    {{- print .Values.base.logging.format -}}
+{{- else -}}
+    {{- fail "invalid logging format. valid values are json, pretty, compact" -}}
+{{- end -}}
 {{- end -}}
 
 {{/* Get a list of cores as a comma-separated list */}}

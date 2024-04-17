@@ -1,23 +1,26 @@
 use crate::{
     common::{
         constants::{
-            TWO_DOT_FIVE, TWO_DOT_FOUR, TWO_DOT_ONE, TWO_DOT_O_RC_ONE, TWO_DOT_SIX, TWO_DOT_THREE,
+            KUBE_API_PAGE_SIZE, TWO_DOT_FIVE, TWO_DOT_FOUR, TWO_DOT_ONE, TWO_DOT_O_RC_ONE,
+            TWO_DOT_SIX, TWO_DOT_THREE,
         },
         error::{
-            DeserializePromtailExtraConfig, Result, SemverParse,
+            DeserializePromtailExtraConfig, ListCrds, Result, SemverParse,
             SerializePromtailConfigClientToJson, SerializePromtailExtraConfigToJson,
             SerializePromtailInitContainerToJson,
         },
         file::write_to_tempfile,
+        kube_client as KubeClient,
     },
     helm::{
         chart::{CoreValues, PromtailConfigClient},
         yaml::yq::{YamlKey, YqV4},
     },
 };
+use kube::{api::ListParams, ResourceExt};
 use semver::Version;
 use snafu::ResultExt;
-use std::path::Path;
+use std::{collections::HashMap, path::Path};
 use tempfile::NamedTempFile as TempFile;
 
 /// This compiles all of the helm values options to be passed during the helm chart upgrade.
@@ -43,7 +46,7 @@ use tempfile::NamedTempFile as TempFile;
 ///     chart_dir --> This is the path to a directory that yq-go may use to write its output file
 /// into. The output file will be a merged values.yaml with special values set as per requirement
 /// (based on source_version and target_version).
-pub(crate) fn generate_values_yaml_file<P, Q>(
+pub(crate) async fn generate_values_yaml_file<P, Q>(
     source_version: &Version,
     target_version: &Version,
     source_values: &CoreValues,
@@ -243,34 +246,8 @@ where
                 target_values.localpv_helper_image_tag(),
                 upgrade_values_file.path(),
             )?;
-            yq.set_literal_value(
-                YamlKey::try_from(".localpv-provisioner.openebs-ndm.ndm.image.tag")?,
-                target_values.localpv_ndm_image_tag(),
-                upgrade_values_file.path(),
-            )?;
-            yq.set_literal_value(
-                YamlKey::try_from(".localpv-provisioner.openebs-ndm.helperPod.image.tag")?,
-                target_values.localpv_ndm_helper_tag(),
-                upgrade_values_file.path(),
-            )?;
-            yq.set_literal_value(
-                YamlKey::try_from(".localpv-provisioner.openebs-ndm.ndmExporter.image.tag")?,
-                target_values.localpv_ndm_exporter_image_tag(),
-                upgrade_values_file.path(),
-            )?;
-            yq.set_literal_value(
-                YamlKey::try_from(".localpv-provisioner.openebs-ndm.ndmOperator.image.tag")?,
-                target_values.localpv_ndm_operator_image_tag(),
-                upgrade_values_file.path(),
-            )?;
         }
-    }
 
-    // Special-case values for 2.6.x.
-    let two_dot_six = Version::parse(TWO_DOT_SIX).context(SemverParse {
-        version_string: TWO_DOT_SIX.to_string(),
-    })?;
-    if source_version.ge(&two_dot_o_rc_zero) && source_version.lt(&two_dot_six) {
         // Switch out image tag for the latest one.
         yq.set_literal_value(
             YamlKey::try_from(".loki-stack.loki.image.tag")?,
@@ -361,6 +338,38 @@ where
             target_values.promtail_readiness_probe_http_get_path(),
             upgrade_values_file.path(),
         )?;
+
+        // This helm value key was changed:
+        // Ref: https://github.com/openebs/mayastor-extensions/pull/419
+        yq.set_literal_value(
+            YamlKey::try_from(".base.logging.silenceLevel")?,
+            source_values.deprecated_log_silence_level(),
+            upgrade_values_file.path(),
+        )?;
+        yq.delete_object(
+            YamlKey::try_from(".base.logSilenceLevel")?,
+            upgrade_values_file.path(),
+        )?;
+
+        // This is a fix for a typo in the .csi.node.pluginMounthPath key.
+        // It was fixed, and the key now is called .csi.node.pluginMountPath.
+        yq.set_literal_value(
+            YamlKey::try_from(".csi.node.pluginMountPath")?,
+            source_values.deprecated_node_csi_mount_path(),
+            upgrade_values_file.path(),
+        )?;
+        yq.delete_object(
+            YamlKey::try_from(".csi.node.pluginMounthPath")?,
+            upgrade_values_file.path(),
+        )?;
+
+        // This sets the image tag for the jaeger-operator. This is required for the
+        // jaeger-operator dependency update from 2.50.0 to 2.50.1.
+        yq.set_literal_value(
+            YamlKey::try_from(".jaeger-operator.image.tag")?,
+            source_values.jaeger_operator_image_tag(),
+            upgrade_values_file.path(),
+        )?;
     }
 
     // Default options.
@@ -403,6 +412,9 @@ where
         target_values.csi_resizer_image_tag(),
         upgrade_values_file.path(),
     )?;
+
+    // Disable CRD installation in case they already exist using helm values.
+    safe_crd_install(upgrade_values_file.path(), &yq).await?;
 
     // helm upgrade .. --set image.tag=<version> --set image.repoTags.controlPlane= --set
     // image.repoTags.dataPlane= --set image.repoTags.extensions=
@@ -472,6 +484,60 @@ fn loki_address_to_clients(
         YamlKey::try_from(".loki-stack.promtail.config.lokiAddress")?,
         upgrade_values_filepath,
     )?;
+
+    Ok(())
+}
+
+/// Use pre-defined helm chart templating to disable CRD installation if they already exist.
+async fn safe_crd_install(upgrade_values_filepath: &Path, yq: &YqV4) -> Result<()> {
+    let mut crd_set_to_helm_toggle: HashMap<Vec<&str>, YamlKey> = HashMap::new();
+    // These 3 CRDs usually exist together.
+    crd_set_to_helm_toggle.insert(
+        vec![
+            "volumesnapshotclasses.snapshot.storage.k8s.io",
+            "volumesnapshotcontents.snapshot.storage.k8s.io",
+            "volumesnapshots.snapshot.storage.k8s.io",
+        ],
+        YamlKey::try_from(".crds.csi.volumeSnapshots.enabled")?,
+    );
+    crd_set_to_helm_toggle.insert(
+        vec!["jaegers.jaegertracing.io"],
+        YamlKey::try_from(".crds.jaeger.enabled")?,
+    );
+
+    let crds_api = KubeClient::crds_api().await?;
+    let mut all_crd_names: Vec<String> = Vec::with_capacity(KUBE_API_PAGE_SIZE as usize);
+    let mut list_params = ListParams::default().limit(KUBE_API_PAGE_SIZE);
+
+    loop {
+        let crd_list = crds_api
+            .list_metadata(&list_params)
+            .await
+            .context(ListCrds)?;
+
+        all_crd_names = all_crd_names
+            .into_iter()
+            .chain(crd_list.iter().map(|metadata| metadata.name_unchecked()))
+            .collect();
+
+        match crd_list.metadata.continue_ {
+            Some(token) => {
+                list_params = list_params.continue_token(token.as_str());
+            }
+            None => break,
+        }
+    }
+
+    for (crd_set, helm_toggle) in crd_set_to_helm_toggle.into_iter() {
+        // Uses an OR logical check to disable set installation, i.e. disable if
+        // at least one exists. Does not make sure if all exist.
+        if all_crd_names
+            .iter()
+            .any(|name| crd_set.contains(&name.as_str()))
+        {
+            yq.set_literal_value(helm_toggle, false, upgrade_values_filepath)?
+        }
+    }
 
     Ok(())
 }

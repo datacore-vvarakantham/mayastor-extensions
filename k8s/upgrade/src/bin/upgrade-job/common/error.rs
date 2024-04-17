@@ -202,20 +202,6 @@ pub(crate) enum Error {
         pod_namespace: String,
     },
 
-    /// Error for when a Kubernetes API request for GET-ing a list of Pods filtered by label(s)
-    /// fails.
-    #[snafu(display(
-        "Failed to list Pods with label {} in namespace {}: {}",
-        label,
-        namespace,
-        source
-    ))]
-    ListPodsWithLabel {
-        source: kube::Error,
-        label: String,
-        namespace: String,
-    },
-
     /// Error for when a Kubernetes API request for GET-ing a list of Nodes filtered by label(s)
     /// fails.
     #[snafu(display("Failed to list Nodes with label {}: {}", label, source))]
@@ -384,10 +370,6 @@ pub(crate) enum Error {
     ))]
     NotAKnownHelmChart { chart_name: String },
 
-    /// Error for when namespace option is not set when building KubeClientSet.
-    #[snafu(display("Mandatory KubeClientSetBuilder option 'namespace' not set"))]
-    KubeClientSetBuilderNs,
-
     /// Error for when mandatory options for an EventRecorder are missing when building.
     #[snafu(display("Mandatory options for EventRecorder were not given"))]
     EventRecorderOptionsAbsent,
@@ -494,23 +476,6 @@ pub(crate) enum Error {
     /// synchronisation tool.
     #[snafu(display("Failed to send Event over the channel"))]
     EventChannelSend,
-
-    /// Error for when the no value for version label is found on the helm chart.
-    #[snafu(display(
-        "Failed to get the value of the {} label in Pod {} in Namespace {}",
-        CHART_VERSION_LABEL_KEY,
-        pod_name,
-        namespace
-    ))]
-    HelmChartVersionLabelHasNoValue { pod_name: String, namespace: String },
-
-    /// Error for when a pod does not have Namespace set on it.
-    #[snafu(display(
-        "Found None when trying to get Namespace for Pod {}, context: {}",
-        pod_name,
-        context
-    ))]
-    NoNamespaceInPod { pod_name: String, context: String },
 
     /// Error for the Umbrella chart is not upgraded.
     #[snafu(display(
@@ -696,31 +661,14 @@ pub(crate) enum Error {
         std_err: String,
     },
 
-    /// Error for when we fail to read the entries of a directory.
-    #[snafu(display("Failed to read the contents of directory {}: {}", path.display(), source))]
-    ReadingDirectoryContents {
-        source: std::io::Error,
-        path: PathBuf,
-    },
+    #[snafu(display("failed to list CustomResourceDefinitions: {source}"))]
+    ListCrds { source: kube::Error },
 
-    /// Error for when the 'crds' directory inside a helm chart directory is either not a
-    /// directory, or it does not exist.
-    #[snafu(display("Helm chart 'crds' directory {} is invalid", path.display()))]
-    InvalidHelmChartCrdDir { path: PathBuf },
-
-    /// Error for when CRD creation fails.
-    #[snafu(display("Failed to create CustomResourceDefinition '{}': {}", name, source))]
-    CreateCrd { source: kube::Error, name: String },
-
-    /// Error for when unwraping of Result<DirEntry, std::io::Error> fails.
-    #[snafu(display(
-        "Failed to collect DirEntry list from read_dir() into a Vec<_> for directory {}: {}",
-        path.display(),
-        source
-    ))]
-    CollectDirEntries {
-        source: std::io::Error,
-        path: PathBuf,
+    #[snafu(display("Partial rebuild must be disabled for upgrades from {chart_name} chart versions >= {lower_extent}, <= {upper_extent}"))]
+    PartialRebuildNotAllowed {
+        chart_name: String,
+        lower_extent: String,
+        upper_extent: String,
     },
 }
 

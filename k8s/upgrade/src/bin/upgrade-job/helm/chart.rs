@@ -31,6 +31,8 @@ impl Chart {
 pub(crate) trait HelmValuesCollection {
     /// This is a getter for state of the 'ha' feature (enabled/disabled).
     fn ha_is_enabled(&self) -> bool;
+    /// This is a getter for the partial-rebuild toggle value.
+    fn partial_rebuild_is_enabled(&self) -> bool;
 }
 
 /// UmbrellaValues is used to deserialize the helm values.yaml for the Umbrella chart. The Core
@@ -56,13 +58,19 @@ impl HelmValuesCollection for UmbrellaValues {
     fn ha_is_enabled(&self) -> bool {
         self.core.ha_is_enabled()
     }
+
+    fn partial_rebuild_is_enabled(&self) -> bool {
+        self.core.partial_rebuild_is_enabled()
+    }
 }
 
 /// This is used to deserialize the values.yaml of the Core chart.
 #[derive(Deserialize)]
 pub(crate) struct CoreValues {
-    /// This contains values for all of the agents.
+    /// This contains values for all the agents.
     agents: Agents,
+    /// This contains values for all the base components.
+    base: Base,
     /// This is the yaml object which contains values for the container image registry, repository,
     /// tag, etc.
     image: Image,
@@ -73,11 +81,14 @@ pub(crate) struct CoreValues {
     eventing: Eventing,
     /// This contains Kubernetes CSI sidecar container image details.
     csi: Csi,
+    /// The contains the values for the jaegertracing/jaeger-operator chart.
+    #[serde(rename(deserialize = "jaeger-operator"))]
+    jaeger_operator: JaegerOperator,
     /// This contains loki-stack details.
     #[serde(rename(deserialize = "loki-stack"))]
     loki_stack: LokiStack,
     /// This contains the sub-chart values for the hostpath provisioner's helm chart.
-    #[serde(rename(deserialize = "localpv-provisioner"))]
+    #[serde(default, rename(deserialize = "localpv-provisioner"))]
     localpv_provisioner: LocalpvProvisioner,
 }
 
@@ -109,14 +120,13 @@ impl HelmValuesCollection for CoreValues {
     fn ha_is_enabled(&self) -> bool {
         self.agents.ha_is_enabled()
     }
+
+    fn partial_rebuild_is_enabled(&self) -> bool {
+        self.agents.partial_rebuild_is_enabled()
+    }
 }
 
 impl CoreValues {
-    /// This is a getter for state of the 'ha' feature (enabled/disabled).
-    pub(crate) fn ha_is_enabled(&self) -> bool {
-        self.agents.ha_is_enabled()
-    }
-
     /// This is a getter for the container image tag of the Core chart.
     pub(crate) fn image_tag(&self) -> &str {
         self.image.tag()
@@ -180,6 +190,11 @@ impl CoreValues {
     /// This is a getter for the CSI node's NVMe io_timeout.
     pub(crate) fn csi_node_nvme_io_timeout(&self) -> &str {
         self.csi.node_nvme_io_timeout()
+    }
+
+    /// This returns the value of the removed key for CSI socket mount path.
+    pub(crate) fn deprecated_node_csi_mount_path(&self) -> &str {
+        self.csi.deprecated_node_csi_mount_path()
     }
 
     /// This is a getter for the grafana/loki container image tag.
@@ -259,26 +274,6 @@ impl CoreValues {
         self.localpv_provisioner.helper_image_tag()
     }
 
-    /// This is a getter for the openebs/node-disk-manager container's image tag.
-    pub(crate) fn localpv_ndm_image_tag(&self) -> &str {
-        self.localpv_provisioner.ndm_image_tag()
-    }
-
-    /// This is a getter for the openebs/linux-utils container's image tag.
-    pub(crate) fn localpv_ndm_helper_tag(&self) -> &str {
-        self.localpv_provisioner.ndm_helper_tag()
-    }
-
-    /// This is a getter for the openebs/node-disk-exporter container's image tag.
-    pub(crate) fn localpv_ndm_exporter_image_tag(&self) -> &str {
-        self.localpv_provisioner.ndm_exporter_image_tag()
-    }
-
-    /// This is a getter for the openebs/node-disk-operator container's image tag.
-    pub(crate) fn localpv_ndm_operator_image_tag(&self) -> &str {
-        self.localpv_provisioner.ndm_operator_image_tag()
-    }
-
     /// This is a getter for the prometheus/alertmanager container's image tag.
     pub(crate) fn prometheus_alertmanager_image_tag(&self) -> &str {
         self.loki_stack.prometheus_alertmanager_image_tag()
@@ -298,11 +293,21 @@ impl CoreValues {
     pub(crate) fn prometheus_server_image_tag(&self) -> &str {
         self.loki_stack.prometheus_server_image_tag()
     }
+
+    /// This is the value of the deprecated key for log silence configuration.
+    pub(crate) fn deprecated_log_silence_level(&self) -> &str {
+        self.base.deprecated_log_silence_level()
+    }
+
+    pub(crate) fn jaeger_operator_image_tag(&self) -> &str {
+        self.jaeger_operator.image_tag()
+    }
 }
 
 /// This is used to deserialize the yaml object agents.
 #[derive(Deserialize)]
 struct Agents {
+    core: Core,
     ha: Ha,
 }
 
@@ -310,6 +315,75 @@ impl Agents {
     /// This is a getter for state of the 'ha' feature (enabled/disabled).
     fn ha_is_enabled(&self) -> bool {
         self.ha.enabled()
+    }
+
+    fn partial_rebuild_is_enabled(&self) -> bool {
+        self.core.partial_rebuild_is_enabled()
+    }
+}
+
+/// This is used to deserialize the yaml object base.
+#[derive(Deserialize)]
+struct Base {
+    #[serde(default, rename(deserialize = "logSilenceLevel"))]
+    deprecated_log_silence_level: String,
+}
+
+impl Base {
+    /// This returns the value for the removed base.logSilenceLevel YAML key.
+    fn deprecated_log_silence_level(&self) -> &str {
+        self.deprecated_log_silence_level.as_str()
+    }
+}
+
+/// This is used to deserialize the yaml object 'agents.core'.
+#[derive(Deserialize)]
+struct Core {
+    #[serde(default)]
+    rebuild: Rebuild,
+}
+
+impl Core {
+    fn partial_rebuild_is_enabled(&self) -> bool {
+        self.rebuild.partial_is_enabled()
+    }
+}
+
+/// This is used to deserialize the yaml object 'agents.core.rebuild'.
+#[derive(Default, Deserialize)]
+struct Rebuild {
+    partial: RebuildPartial,
+}
+
+impl Rebuild {
+    fn partial_is_enabled(&self) -> bool {
+        self.partial.enabled()
+    }
+}
+
+/// This is used to deserialize the yaml object 'agents.core.rebuild.partial'.
+#[derive(Deserialize)]
+struct RebuildPartial {
+    enabled: bool,
+}
+
+impl Default for RebuildPartial {
+    /// We've never shipped with partial rebuild set to off. Also for a good while after
+    /// the feature was introduced, it was enabled without an option to disable it. So
+    /// assuming that partial rebuild is enabled, if the YAML object for Rebuild is missing.
+    /// The Rebuild type will be deserialized with a default value if it's absent from the
+    /// helm values.
+    ///
+    ///     #[serde(default)]
+    ///     rebuild: Rebuild,
+    fn default() -> Self {
+        Self { enabled: true }
+    }
+}
+
+impl RebuildPartial {
+    fn enabled(&self) -> bool {
+        self.enabled
     }
 }
 
@@ -475,6 +549,11 @@ impl Csi {
     fn node_nvme_io_timeout(&self) -> &str {
         self.node.nvme_io_timeout()
     }
+
+    /// This returns the mount path value's key, the old one with the typo.
+    fn deprecated_node_csi_mount_path(&self) -> &str {
+        self.node.deprecated_plugin_mount_path()
+    }
 }
 
 /// This contains the image tags for the CSI sidecar containers.
@@ -534,12 +613,19 @@ impl CsiImage {
 #[derive(Deserialize)]
 struct CsiNode {
     nvme: CsiNodeNvme,
+    #[serde(default, rename(deserialize = "pluginMounthPath"))]
+    deprecated_plugin_mount_path: String,
 }
 
 impl CsiNode {
     /// This is a getter for the NVMe IO timeout.
     fn nvme_io_timeout(&self) -> &str {
         self.nvme.io_timeout()
+    }
+
+    /// This returns the csi node mount path key's value. The key had a typo, it's been removed.
+    fn deprecated_plugin_mount_path(&self) -> &str {
+        self.deprecated_plugin_mount_path.as_str()
     }
 }
 
@@ -653,6 +739,7 @@ impl LokiStack {
 #[derive(Deserialize)]
 #[serde(rename_all(deserialize = "camelCase"))]
 struct Filebeat {
+    #[serde(default)]
     image_tag: String,
 }
 
@@ -667,6 +754,7 @@ impl Filebeat {
 #[derive(Deserialize)]
 #[serde(rename_all(deserialize = "camelCase"))]
 struct Grafana {
+    #[serde(default)]
     download_dashboards_image: GrafanaDownloadDashboardsImage,
     image: GenericImage,
     sidecar: GrafanaSidecar,
@@ -690,8 +778,9 @@ impl Grafana {
 }
 
 /// This is used to deserialize the YAML object 'loki-stack.grafana.downloadDashboardsImage'.
-#[derive(Deserialize)]
+#[derive(Default, Deserialize)]
 struct GrafanaDownloadDashboardsImage {
+    #[serde(default)]
     tag: String,
 }
 
@@ -705,6 +794,7 @@ impl GrafanaDownloadDashboardsImage {
 /// This is used to deserialize the YAML object 'loki-stack.grafana.sidecar'.
 #[derive(Deserialize)]
 struct GrafanaSidecar {
+    #[serde(default)]
     image: GenericImage,
 }
 
@@ -745,9 +835,13 @@ impl Loki {
 #[derive(Deserialize)]
 #[serde(rename_all(deserialize = "camelCase"))]
 struct Prometheus {
+    #[serde(default)]
     alertmanager: PrometheusAlertmanager,
+    #[serde(default)]
     node_exporter: PrometheusNodeExporter,
+    #[serde(default)]
     pushgateway: PrometheusPushgateway,
+    #[serde(default)]
     server: PrometheusServer,
 }
 
@@ -774,8 +868,9 @@ impl Prometheus {
 }
 
 /// This is used to deserialize the prometheus chart's alertmanager YAML object.
-#[derive(Deserialize)]
+#[derive(Default, Deserialize)]
 struct PrometheusAlertmanager {
+    #[serde(default)]
     image: GenericImage,
 }
 
@@ -786,8 +881,9 @@ impl PrometheusAlertmanager {
 }
 
 /// This is used to deserialize the prometheus chart's nodeExporter YAML object.
-#[derive(Deserialize)]
+#[derive(Default, Deserialize)]
 struct PrometheusNodeExporter {
+    #[serde(default)]
     image: GenericImage,
 }
 
@@ -798,8 +894,9 @@ impl PrometheusNodeExporter {
 }
 
 /// This is used to deserialize the prometheus chart's pushgateway YAML object.
-#[derive(Deserialize)]
+#[derive(Default, Deserialize)]
 struct PrometheusPushgateway {
+    #[serde(default)]
     image: GenericImage,
 }
 
@@ -810,8 +907,9 @@ impl PrometheusPushgateway {
 }
 
 /// This is used to deserialize the prometheus chart's server YAML object.
-#[derive(Deserialize)]
+#[derive(Default, Deserialize)]
 struct PrometheusServer {
+    #[serde(default)]
     image: GenericImage,
 }
 
@@ -946,16 +1044,12 @@ impl PromtailConfigClient {
 }
 
 /// This is used to deserialize the helm values of the localpv-provisioner helm chart.
-#[derive(Deserialize)]
+#[derive(Default, Deserialize)]
 #[serde(rename_all(deserialize = "camelCase"))]
 struct LocalpvProvisioner {
     release: LocalpvProvisionerRelease,
     localpv: LocalpvProvisionerLocalpv,
     helper_pod: LocalpvProvisionerHelperPod,
-    /// This is the NDM helm subchart values. This is absent ('None' case) if
-    /// openebsNDM.enabled=false.
-    #[serde(rename(deserialize = "openebs-ndm"))]
-    openebs_ndm: LocalpvProvisionerNdm,
 }
 
 impl LocalpvProvisioner {
@@ -973,31 +1067,11 @@ impl LocalpvProvisioner {
     fn helper_image_tag(&self) -> &str {
         self.helper_pod.image_tag()
     }
-
-    /// This is a getter for the openebs/node-disk-manager container's image tag.
-    fn ndm_image_tag(&self) -> &str {
-        self.openebs_ndm.ndm_image_tag()
-    }
-
-    /// This is a getter for the openebs/linux-utils container's image tag.
-    fn ndm_helper_tag(&self) -> &str {
-        self.openebs_ndm.ndm_helper_image_tag()
-    }
-
-    /// This is a getter for the openebs/node-disk-exporter container's image tag.
-    fn ndm_exporter_image_tag(&self) -> &str {
-        self.openebs_ndm.ndm_exporter_image_tag()
-    }
-
-    /// This is a getter for the openebs/node-disk-operator container's image tag.
-    fn ndm_operator_image_tag(&self) -> &str {
-        self.openebs_ndm.ndm_operator_image_tag()
-    }
 }
 
 /// This is used to deserialize the 'release.version' yaml object in the localpv-provisioner helm
 /// chart.
-#[derive(Deserialize)]
+#[derive(Default, Deserialize)]
 struct LocalpvProvisionerRelease {
     version: String,
 }
@@ -1011,7 +1085,7 @@ impl LocalpvProvisionerRelease {
 }
 
 /// This is used to deserialize the 'localpv' yaml object in the localpv-provisioner helm chart.
-#[derive(Deserialize)]
+#[derive(Default, Deserialize)]
 struct LocalpvProvisionerLocalpv {
     image: GenericImage,
 }
@@ -1025,8 +1099,9 @@ impl LocalpvProvisionerLocalpv {
 
 /// This is used to deserialize various 'image' yaml objects in the localpv-provisioner helm
 /// chart.
-#[derive(Deserialize)]
+#[derive(Default, Deserialize)]
 struct GenericImage {
+    #[serde(default)]
     tag: String,
 }
 
@@ -1038,7 +1113,7 @@ impl GenericImage {
 }
 
 /// This is used to deserialize the 'helperPod' yaml object in the localpv-provisioner helm chart.
-#[derive(Deserialize)]
+#[derive(Default, Deserialize)]
 struct LocalpvProvisionerHelperPod {
     image: GenericImage,
 }
@@ -1050,71 +1125,15 @@ impl LocalpvProvisionerHelperPod {
     }
 }
 
+/// This is used to deserialize the '.jaeger-operator' yaml object.
 #[derive(Deserialize)]
-#[serde(rename_all(deserialize = "camelCase"))]
-struct LocalpvProvisionerNdm {
-    helper_pod: LocalpvProvisionerHelperPod,
-    ndm: Ndm,
-    ndm_exporter: NdmExporter,
-    ndm_operator: NdmOperator,
-}
-
-impl LocalpvProvisionerNdm {
-    /// Returns the ndm daemonset image tag.
-    fn ndm_image_tag(&self) -> &str {
-        self.ndm.image_tag()
-    }
-
-    /// Returns the ndm helper image tag.
-    fn ndm_helper_image_tag(&self) -> &str {
-        self.helper_pod.image_tag()
-    }
-
-    /// Returns the ndm exporter image tag.
-    fn ndm_exporter_image_tag(&self) -> &str {
-        self.ndm_exporter.image_tag()
-    }
-
-    /// Returns the ndm operator image tag.
-    fn ndm_operator_image_tag(&self) -> &str {
-        self.ndm_operator.image_tag()
-    }
-}
-
-/// This is used to deserialize the '.localpv-provisioner.openebs-ndm.ndm' YAML object.
-#[derive(Deserialize)]
-struct Ndm {
+struct JaegerOperator {
+    #[serde(default)]
     image: GenericImage,
 }
 
-impl Ndm {
-    /// This returns the image tag for ndm.
-    fn image_tag(&self) -> &str {
-        self.image.tag()
-    }
-}
-
-/// This is used to deserialize the '.localpv-provisioner.openebs-ndm.ndmExporter' YAML object.
-#[derive(Deserialize)]
-struct NdmExporter {
-    image: GenericImage,
-}
-
-impl NdmExporter {
-    /// This returns the image tag for ndm-exporter.
-    fn image_tag(&self) -> &str {
-        self.image.tag()
-    }
-}
-
-/// This is used to deserialize the '.localpv-provisioner.openebs-ndm.ndmOperator' YAML object.
-#[derive(Deserialize)]
-struct NdmOperator {
-    image: GenericImage,
-}
-
-impl NdmOperator {
-    /// This returns the image tag for ndm-operator.
+impl JaegerOperator {
+    /// This returns the image tag of the jaeger-operator from the jaeger-operator helm chart.
     fn image_tag(&self) -> &str {
         self.image.tag()
     }

@@ -1,4 +1,7 @@
-use crate::common::error::{K8sClientGeneration, KubeClientSetBuilderNs, Result};
+use crate::common::{
+    constants::KUBE_API_PAGE_SIZE,
+    error::{K8sClientGeneration, ListPodsWithLabelAndField, Result},
+};
 use k8s_openapi::{
     api::{
         apps::v1::Deployment,
@@ -6,87 +9,81 @@ use k8s_openapi::{
     },
     apiextensions_apiserver::pkg::apis::apiextensions::v1::CustomResourceDefinition,
 };
-use kube::{api::Api, Client};
+use kube::{
+    api::{Api, ListParams},
+    Client,
+};
 use snafu::ResultExt;
 
-/// Builder for Kubernetes clients.
-#[derive(Default)]
-pub(crate) struct KubeClientSetBuilder {
-    namespace: Option<String>,
+/// Generate a new kube::Client.
+pub(crate) async fn client() -> Result<Client> {
+    Client::try_default().await.context(K8sClientGeneration)
 }
 
-impl KubeClientSetBuilder {
-    /// Build Kubernetes API clients for a specific namespace (for namespaced object only).
-    #[must_use]
-    pub(crate) fn with_namespace<T>(mut self, namespace: T) -> Self
-    where
-        T: ToString,
-    {
-        self.namespace = Some(namespace.to_string());
-        self
-    }
-
-    // TODO: Make the builder option validations error out at compile-time, using std::compile_error
-    // or something similar.
-    /// Build the KubeClientSet.
-    pub(crate) async fn build(self) -> Result<KubeClientSet> {
-        // Namespace must be used.
-        let namespace = self.namespace.ok_or(KubeClientSetBuilderNs.build())?;
-
-        let client = Client::try_default().await.context(K8sClientGeneration)?;
-        return Ok(KubeClientSet {
-            client: client.clone(),
-            nodes_api: Api::all(client.clone()),
-            pods_api: Api::namespaced(client.clone(), namespace.as_str()),
-            namespaces_api: Api::all(client.clone()),
-            deployments_api: Api::namespaced(client.clone(), namespace.as_str()),
-            crd_api: Api::all(client),
-        });
-    }
+/// Generate the Node api client.
+pub(crate) async fn nodes_api() -> Result<Api<Node>> {
+    Ok(Api::all(client().await?))
 }
 
-/// This is a wrapper around kube::Client with helper methods to generate Api<?> clients.
-pub(crate) struct KubeClientSet {
-    client: Client,
-    nodes_api: Api<Node>,
-    pods_api: Api<Pod>,
-    namespaces_api: Api<Namespace>,
-    deployments_api: Api<Deployment>,
-    crd_api: Api<CustomResourceDefinition>,
+/// Generate the Namespace api client.
+pub(crate) async fn namespaces_api() -> Result<Api<Namespace>> {
+    Ok(Api::all(client().await?))
 }
 
-impl KubeClientSet {
-    pub(crate) fn builder() -> KubeClientSetBuilder {
-        KubeClientSetBuilder::default()
+/// Generate the CustomResourceDefinition api client.
+pub(crate) async fn crds_api() -> Result<Api<CustomResourceDefinition>> {
+    Ok(Api::all(client().await?))
+}
+
+/// Generate the Pod api client.
+pub(crate) async fn pods_api(namespace: &str) -> Result<Api<Pod>> {
+    Ok(Api::namespaced(client().await?, namespace))
+}
+
+/// Generate the Deployment api client.
+pub(crate) async fn deployments_api(namespace: &str) -> Result<Api<Deployment>> {
+    Ok(Api::namespaced(client().await?, namespace))
+}
+
+pub(crate) async fn list_pods(
+    namespace: String,
+    label_selector: Option<String>,
+    field_selector: Option<String>,
+) -> Result<Vec<Pod>> {
+    let mut pods: Vec<Pod> = Vec::with_capacity(KUBE_API_PAGE_SIZE as usize);
+
+    let mut list_params = ListParams::default().limit(KUBE_API_PAGE_SIZE);
+    if let Some(ref labels) = label_selector {
+        list_params = list_params.labels(labels.as_str());
+    }
+    if let Some(ref fields) = field_selector {
+        list_params = list_params.fields(fields.as_str());
     }
 
-    /// Generate the Node api client.
-    pub(crate) fn nodes_api(&self) -> &Api<Node> {
-        &self.nodes_api
+    let list_pods_error_ctx = ListPodsWithLabelAndField {
+        label: label_selector.unwrap_or_default(),
+        field: field_selector.unwrap_or_default(),
+        namespace: namespace.clone(),
+    };
+
+    loop {
+        let pod_list = pods_api(namespace.as_str())
+            .await?
+            .list(&list_params)
+            .await
+            .context(list_pods_error_ctx.clone())?;
+
+        let continue_ = pod_list.metadata.continue_.clone();
+
+        pods = pods.into_iter().chain(pod_list).collect();
+
+        match continue_ {
+            Some(token) => {
+                list_params = list_params.continue_token(token.as_str());
+            }
+            None => break,
+        }
     }
 
-    /// Generate the Pod api client.
-    pub(crate) fn pods_api(&self) -> &Api<Pod> {
-        &self.pods_api
-    }
-
-    /// Generate the Namespace api client.
-    pub(crate) fn namespaces_api(&self) -> &Api<Namespace> {
-        &self.namespaces_api
-    }
-
-    /// Generate the Deployment api client.
-    pub(crate) fn deployments_api(&self) -> &Api<Deployment> {
-        &self.deployments_api
-    }
-
-    /// Generate the CustomResourceDefinition api client.
-    pub(crate) fn crd_api(&self) -> &Api<CustomResourceDefinition> {
-        &self.crd_api
-    }
-
-    /// Get a clone of the kube::Client.
-    pub(crate) fn client(&self) -> Client {
-        self.client.clone()
-    }
+    Ok(pods)
 }
