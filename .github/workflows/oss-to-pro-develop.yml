@@ -25,6 +25,6 @@ jobs:
       - name: Bors Merge Pull Request
         if: contains(github.event.pull_request.labels.*.name, 'oss-sync')
         run: |
-          gh pr comment ${{ github.event.pull_request.number }} --body "bors try"
+          gh pr comment ${{ github.event.pull_request.number }} --body "bors merge"
         env:
           GH_TOKEN: ${{ secrets.ORG_CI_GITHUB }}
