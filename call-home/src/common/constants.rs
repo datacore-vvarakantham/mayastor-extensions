@@ -5,7 +5,7 @@ use std::{
 use utils::version_info;
 
 /// PRODUCT is the name of the project for which this call-home component is deployed.
-pub const PRODUCT: &str = "Mayastor";
+pub const PRODUCT: &str = "Pro";
 
 /// Label for release name.
 pub const HELM_RELEASE_NAME_LABEL: &str = "openebs.io/release";
